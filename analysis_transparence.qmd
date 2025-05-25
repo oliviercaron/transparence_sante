@@ -1,0 +1,814 @@
+---
+title: "Analyses des notes de la PSL Week 2024"
+title-block-banner: true
+subtitle: "Mineure action publique"
+author:
+  - name: Olivier CARON
+    email: caron.olivier.80@gmail.com
+    affiliations: 
+      name: "Paris Dauphine-PSL"
+      city: Paris
+      state: France
+date: "last-modified"
+toc: true
+number-sections: true
+number-depth: 10
+format:
+  html:
+    theme:
+      light: litera
+    code-fold: true
+    code-summary: "Display code"
+    code-tools: true #enables to display/hide all blocks of code
+    code-copy: true #enables to copy code
+    grid:
+      body-width: 1000px
+      margin-width: 100px
+    toc: true
+    toc-title: "Table of content"
+    toc-location: left
+execute:
+  echo: true
+  warning: false
+  message: false
+editor: visual
+fig-align: "center"
+highlight-style: ayu-light
+reference-location: margin
+#lightbox: true
+filters:
+  - parse-latex
+---
+
+## Load data
+
+```{r}
+#| label: load-data
+#| column: screen-right
+
+library(tidyverse)
+library(report)
+library(janitor)
+library(readxl)
+library(DT)
+library(hrbrthemes)
+library(extrafont)
+library(ggthemr)
+library(data.table
+        )
+library(pander)
+library(cowplot)
+#ggthemr("fresh")
+#load all fonts windows
+#extrafont::font_import()
+loadfonts(device = "win")
+#windowsFonts()
+
+declarations <- read_csv2("data/declarations.csv", locale = locale(encoding = "UTF-8"))
+declarations_maj <- read_csv2("data/declarations_25-05-2025.csv")
+str(declarations_maj)
+#declarations <- fread("data/declarations.csv", encoding = "UTF-8")
+
+declarations <- janitor::clean_names(declarations)
+
+options(scipen = 999)  # Réduit l'utilisation de la notation scientifique
+```
+
+
+```{r}
+# =============================================================================
+# 1. NETTOYAGE ET PRÉPARATION DES DONNÉES
+# =============================================================================
+
+# Nettoyage des montants
+declarations_clean <- declarations_maj %>%
+  mutate(
+    montant_num = as.numeric(str_replace_all(montant, ",", ".")),
+    annee = year(date),
+    mois = month(date),
+    semestre = ifelse(mois <= 6, 1, 2),
+    # Créer des catégories simplifiées
+    categorie_simple = case_when(
+      beneficiaire_categorie == "Professionnel de santé" ~ "Pro Santé",
+      beneficiaire_categorie == "Etudiant" ~ "Étudiant",
+      beneficiaire_categorie == "Influenceur" ~ "Influenceur",
+      str_detect(beneficiaire_categorie, "Association") ~ "Association",
+      str_detect(beneficiaire_categorie, "Etablissement") ~ "Établissement",
+      TRUE ~ "Autre"
+    )
+  ) %>%
+  filter(!is.na(montant_num), montant_num > 0) # Garder seulement les montants valides
+
+# =============================================================================
+# 2. ANALYSES GÉNÉRALES - VUE D'ENSEMBLE
+# =============================================================================
+
+# Montant total par année
+montant_par_annee <- declarations_clean %>%
+  group_by(annee) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    montant_moyen = mean(montant_num, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Graphique évolution temporelle
+g1 <- ggplot(montant_par_annee, aes(x = annee)) +
+  geom_line(aes(y = montant_total/1000000), color = "#e74c3c", size = 1.2) +
+  geom_point(aes(y = montant_total/1000000), color = "#c0392b", size = 3) +
+  labs(
+    title = "Évolution du montant total des avantages par année",
+    subtitle = "Montants déclarés par l'industrie pharmaceutique",
+    x = "Année", 
+    y = "Montant total (millions €)",
+    caption = "Source: Base Transparence Santé"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12, color = "gray60")
+  )
+
+print(g1)
+
+# =============================================================================
+# 3. TOP ENTREPRISES - QUI DONNE LE PLUS ?
+# =============================================================================
+
+# Top 15 entreprises par montant total
+top_entreprises <- declarations_clean %>%
+  group_by(raison_sociale) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    montant_moyen_par_declaration = mean(montant_num, na.rm = TRUE),
+    beneficiaires_uniques = n_distinct(paste(identite, prenom)),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total)) %>%
+  head(15)
+
+# Graphique top entreprises
+g2 <- ggplot(top_entreprises, aes(x = reorder(raison_sociale, montant_total), y = montant_total/1000000)) +
+  geom_col(fill = "#3498db", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    title = "Top 15 des entreprises qui donnent le plus d'avantages",
+    subtitle = "Montant total cumulé sur toute la période",
+    x = "", 
+    y = "Montant total (millions €)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 10)
+  )
+
+print(g2)
+
+# Affichage du tableau des top entreprises
+print("=== TOP 15 ENTREPRISES PAR MONTANT TOTAL ===")
+top_entreprises %>%
+  mutate(
+    montant_total = round(montant_total/1000000, 2),
+    montant_moyen_par_declaration = round(montant_moyen_par_declaration, 0)
+  ) %>%
+  select(
+    Entreprise = raison_sociale,
+    `Montant total (M€)` = montant_total,
+    `Nb déclarations` = nombre_declarations,
+    `Montant moyen` = montant_moyen_par_declaration,
+    `Bénéficiaires uniques` = beneficiaires_uniques
+  ) %>%
+  print()
+
+# =============================================================================
+# 4. ANALYSE PAR CATÉGORIE DE BÉNÉFICIAIRES
+# =============================================================================
+
+# Répartition par catégorie
+repartition_categorie <- declarations_clean %>%
+  group_by(categorie_simple) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    pourcentage_montant = round(100 * montant_total / sum(declarations_clean$montant_num, na.rm = TRUE), 1),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total))
+
+# Graphique en camembert
+g3 <- ggplot(repartition_categorie, aes(x = "", y = montant_total, fill = categorie_simple)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  scale_fill_viridis_d() +
+  labs(
+    title = "Répartition des montants par catégorie de bénéficiaires",
+    fill = "Catégorie"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "right"
+  )
+
+print(g3)
+
+# =============================================================================
+# 5. LES PLUS GROS BÉNÉFICIAIRES INDIVIDUELS
+# =============================================================================
+
+# Top bénéficiaires individuels (professionnels de santé)
+top_beneficiaires <- declarations_clean %>%
+  filter(categorie_simple == "Pro Santé") %>%
+  group_by(identite, prenom, profession_libelle) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    entreprises_differentes = n_distinct(raison_sociale),
+    ville = first(ville),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total)) %>%
+  head(20)
+
+print("=== TOP 20 BÉNÉFICIAIRES INDIVIDUELS (PROFESSIONNELS DE SANTÉ) ===")
+top_beneficiaires %>%
+  mutate(
+    montant_total = round(montant_total, 0),
+    nom_complet = paste(identite, prenom)
+  ) %>%
+  select(
+    `Nom Prénom` = nom_complet,
+    Profession = profession_libelle,
+    Ville = ville,
+    `Montant total (€)` = montant_total,
+    `Nb déclarations` = nombre_declarations,
+    `Nb entreprises` = entreprises_differentes
+  ) %>%
+  print()
+
+# =============================================================================
+# 6. FOCUS SUR LES INFLUENCEURS
+# =============================================================================
+
+# Analyse spécifique des influenceurs
+influenceurs_analysis <- declarations_clean %>%
+  filter(categorie_simple == "Influenceur") %>%
+  group_by(identite, prenom) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    entreprises_differentes = n_distinct(raison_sociale),
+    montant_moyen = mean(montant_num, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total))
+
+if(nrow(influenceurs_analysis) > 0) {
+  print("=== INFLUENCEURS LES PLUS RÉMUNÉRÉS ===")
+  influenceurs_analysis %>%
+    head(10) %>%
+    mutate(
+      montant_total = round(montant_total, 0),
+      montant_moyen = round(montant_moyen, 0),
+      nom_complet = paste(identite, prenom)
+    ) %>%
+    select(
+      `Influenceur` = nom_complet,
+      `Montant total (€)` = montant_total,
+      `Montant moyen (€)` = montant_moyen,
+      `Nb déclarations` = nombre_declarations,
+      `Nb entreprises` = entreprises_differentes
+    ) %>%
+    print()
+}
+
+# =============================================================================
+# 7. ANALYSE GÉOGRAPHIQUE
+# =============================================================================
+
+# Répartition par région
+repartition_regionale <- declarations_clean %>%
+  filter(!is.na(reg_name)) %>%
+  group_by(reg_name) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    beneficiaires_uniques = n_distinct(paste(identite, prenom)),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total)) %>%
+  head(10)
+
+# Graphique répartition régionale
+g4 <- ggplot(repartition_regionale, aes(x = reorder(reg_name, montant_total), y = montant_total/1000000)) +
+  geom_col(fill = "#e67e22", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    title = "Top 10 des régions par montant d'avantages reçus",
+    x = "", 
+    y = "Montant total (millions €)"
+  ) +
+  theme_minimal()
+
+print(g4)
+
+# =============================================================================
+# 8. ANALYSE PAR TYPE D'AVANTAGE
+# =============================================================================
+
+# Types d'avantages les plus fréquents
+types_avantages <- declarations_clean %>%
+  filter(!is.na(motif_lien_interet)) %>%
+  group_by(motif_lien_interet) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    montant_moyen = mean(montant_num, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total))
+
+# Graphique types d'avantages
+g5 <- ggplot(types_avantages, aes(x = reorder(motif_lien_interet, montant_total), y = montant_total/1000000)) +
+  geom_col(fill = "#9b59b6", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    title = "Montants totaux par type d'avantage",
+    x = "", 
+    y = "Montant total (millions €)"
+  ) +
+  theme_minimal()
+
+print(g5)
+
+# =============================================================================
+# 9. STATISTIQUES RÉSUMÉES IMPORTANTES
+# =============================================================================
+
+print("=== STATISTIQUES GÉNÉRALES ===")
+cat("Période analysée:", min(declarations_clean$annee, na.rm = TRUE), "-", max(declarations_clean$annee, na.rm = TRUE), "\n")
+cat("Nombre total de déclarations:", nrow(declarations_clean), "\n")
+cat("Montant total des avantages:", round(sum(declarations_clean$montant_num, na.rm = TRUE)/1000000, 2), "millions €\n")
+cat("Montant moyen par déclaration:", round(mean(declarations_clean$montant_num, na.rm = TRUE), 0), "€\n")
+cat("Nombre d'entreprises déclarantes:", n_distinct(declarations_clean$raison_sociale), "\n")
+cat("Nombre de bénéficiaires uniques:", n_distinct(paste(declarations_clean$identite, declarations_clean$prenom)), "\n")
+
+# =============================================================================
+# 10. GRAPHIQUE COMBINÉ FINAL
+# =============================================================================
+
+# Créer un dashboard avec plusieurs graphiques
+dashboard <- (g1 + g2) / (g3 + g4)
+print(dashboard)
+
+# =============================================================================
+# 11. ANALYSES COMPLÉMENTAIRES INTÉRESSANTES
+# =============================================================================
+
+# Evolution des montants moyens par catégorie
+evolution_categories <- declarations_clean %>%
+  group_by(annee, categorie_simple) %>%
+  summarise(
+    montant_moyen = mean(montant_num, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+g6 <- ggplot(evolution_categories, aes(x = annee, y = montant_moyen, color = categorie_simple)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  scale_color_viridis_d() +
+  labs(
+    title = "Évolution du montant moyen par catégorie",
+    x = "Année",
+    y = "Montant moyen (€)",
+    color = "Catégorie"
+  ) +
+  theme_minimal()
+
+print(g6)
+
+# Relations entreprises-bénéficiaires (concentration)
+concentration_analysis <- declarations_clean %>%
+  group_by(raison_sociale) %>%
+  summarise(
+    nb_beneficiaires = n_distinct(paste(identite, prenom)),
+    montant_total = sum(montant_num, na.rm = TRUE),
+    montant_par_beneficiaire = montant_total / nb_beneficiaires,
+    .groups = 'drop'
+  ) %>%
+  filter(nb_beneficiaires >= 10) %>%
+  arrange(desc(montant_par_beneficiaire))
+
+print("=== ENTREPRISES AVEC LE PLUS GROS MONTANT MOYEN PAR BÉNÉFICIAIRE ===")
+concentration_analysis %>%
+  head(10) %>%
+  mutate(
+    montant_par_beneficiaire = round(montant_par_beneficiaire, 0)
+  ) %>%
+  select(
+    Entreprise = raison_sociale,
+    `Nb bénéficiaires` = nb_beneficiaires,
+    `Montant moyen/bénéficiaire` = montant_par_beneficiaire
+  ) %>%
+  print()
+
+print("=== ANALYSE TERMINÉE ===")
+print("Tous les graphiques et analyses sont générés !")
+print("Tu peux maintenant utiliser ces résultats pour ton PowerPoint.")
+```
+
+
+
+## Analysis très rapide avec Claude
+
+```{r}
+
+# =============================================================================
+# 1. CRÉATION DU DOSSIER DE SORTIE ET PRÉPARATION
+# =============================================================================
+
+# Créer le dossier pour sauvegarder les graphiques
+if (!dir.exists("ggplot_analysis")) {
+  dir.create("ggplot_analysis")
+}
+
+# =============================================================================
+# 2. NETTOYAGE ET PRÉPARATION DES DONNÉES
+# =============================================================================
+
+# Préparation des données
+declarations_clean <- declarations_maj %>%
+  mutate(
+    montant_num = as.numeric(montant),
+    annee = year(date),
+    mois = month(date),
+    semestre = ifelse(mois <= 6, 1, 2),
+    # Créer des catégories simplifiées
+    categorie_simple = case_when(
+      beneficiaire_categorie == "Professionnel de santé" ~ "Pro Santé",
+      beneficiaire_categorie == "Etudiant" ~ "Étudiant",
+      beneficiaire_categorie == "Influenceur" ~ "Influenceur",
+      str_detect(beneficiaire_categorie, "Association") ~ "Association",
+      str_detect(beneficiaire_categorie, "Etablissement") ~ "Établissement",
+      TRUE ~ "Autre"
+    )
+  ) %>%
+  filter(!is.na(montant_num), montant_num > 0) # Garder seulement les montants valides
+
+# =============================================================================
+# 2. ANALYSES GÉNÉRALES - VUE D'ENSEMBLE
+# =============================================================================
+
+# Montant total par année
+montant_par_annee <- declarations_clean %>%
+  group_by(annee) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    montant_moyen = mean(montant_num, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Graphique évolution temporelle
+g1 <- ggplot(montant_par_annee, aes(x = annee)) +
+  geom_line(aes(y = montant_total / 1000000), color = "#e74c3c", size = 1.2) +
+  geom_point(aes(y = montant_total / 1000000), color = "#c0392b", size = 3) +
+  scale_x_continuous(
+    breaks = seq(min(montant_par_annee$annee), max(montant_par_annee$annee), by = 1)
+  ) +  # Ensure all years are shown
+  labs(
+    title = "Évolution du montant total des avantages par année",
+    subtitle = "Montants déclarés par l'industrie pharmaceutique",
+    x = "Année", 
+    y = "Montant total (millions €)",
+    caption = "Source: Base Transparence Santé"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12, color = "gray60")
+  )
+
+# Sauvegarder le graphique
+ggsave("ggplot_analysis/01_evolution_montants_annuels.png", plot = g1, 
+       width = 12, height = 8, dpi = 600, bg = "white")
+print(g1)
+
+# =============================================================================
+# 3. TOP ENTREPRISES - QUI DONNE LE PLUS ?
+# =============================================================================
+
+# Top 15 entreprises par montant total
+top_entreprises <- declarations_clean %>%
+  group_by(raison_sociale) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    montant_moyen_par_declaration = mean(montant_num, na.rm = TRUE),
+    beneficiaires_uniques = n_distinct(paste(identite, prenom)),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total)) %>%
+  head(15)
+
+# Graphique top entreprises
+g2 <- ggplot(top_entreprises, aes(x = reorder(raison_sociale, montant_total), y = montant_total/1000000)) +
+  geom_col(fill = "#3498db", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    title = "Top 15 des entreprises qui donnent le plus d'avantages",
+    subtitle = "Montant total cumulé sur toute la période",
+    x = "", 
+    y = "Montant total (millions €)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 10)
+  )
+
+# Sauvegarder le graphique
+ggsave("ggplot_analysis/02_top_entreprises.png", plot = g2, 
+       width = 12, height = 10, dpi = 600, bg = "white")
+print(g2)
+
+# Affichage du tableau des top entreprises
+print("=== TOP 15 ENTREPRISES PAR MONTANT TOTAL ===")
+top_entreprises %>%
+  mutate(
+    montant_total = round(montant_total/1000000, 2),
+    montant_moyen_par_declaration = round(montant_moyen_par_declaration, 0)
+  ) %>%
+  select(
+    Entreprise = raison_sociale,
+    `Montant total (M€)` = montant_total,
+    `Nb déclarations` = nombre_declarations,
+    `Montant moyen` = montant_moyen_par_declaration,
+    `Bénéficiaires uniques` = beneficiaires_uniques
+  ) %>%
+  print()
+
+# =============================================================================
+# 4. ANALYSE PAR CATÉGORIE DE BÉNÉFICIAIRES
+# =============================================================================
+
+# Répartition par catégorie
+repartition_categorie <- declarations_clean %>%
+  group_by(categorie_simple) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    pourcentage_montant = round(100 * montant_total / sum(declarations_clean$montant_num, na.rm = TRUE), 1),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total))
+
+# Graphique en camembert
+g3 <- ggplot(repartition_categorie, aes(x = "", y = montant_total, fill = categorie_simple)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  scale_fill_viridis_d() +
+  labs(
+    title = "Répartition des montants par catégorie de bénéficiaires",
+    fill = "Catégorie"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "right"
+  )
+
+# Sauvegarder le graphique
+ggsave("ggplot_analysis/03_repartition_categories.png", plot = g3, 
+       width = 12, height = 8, dpi = 600, bg = "white")
+print(g3)
+
+# =============================================================================
+# 5. LES PLUS GROS BÉNÉFICIAIRES INDIVIDUELS
+# =============================================================================
+
+# Top bénéficiaires individuels (professionnels de santé)
+top_beneficiaires <- declarations_clean %>%
+  filter(categorie_simple == "Pro Santé") %>%
+  group_by(identite, prenom, profession_libelle) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    entreprises_differentes = n_distinct(raison_sociale),
+    ville = first(ville),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total)) %>%
+  head(20)
+
+print("=== TOP 20 BÉNÉFICIAIRES INDIVIDUELS (PROFESSIONNELS DE SANTÉ) ===")
+top_beneficiaires %>%
+  mutate(
+    montant_total = round(montant_total, 0),
+    nom_complet = paste(identite, prenom)
+  ) %>%
+  select(
+    `Nom Prénom` = nom_complet,
+    Profession = profession_libelle,
+    Ville = ville,
+    `Montant total (€)` = montant_total,
+    `Nb déclarations` = nombre_declarations,
+    `Nb entreprises` = entreprises_differentes
+  ) %>%
+  print()
+
+# =============================================================================
+# 6. FOCUS SUR LES INFLUENCEURS
+# =============================================================================
+
+# Analyse spécifique des influenceurs
+influenceurs_analysis <- declarations_clean %>%
+  filter(categorie_simple == "Influenceur") %>%
+  group_by(identite, prenom) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    entreprises_differentes = n_distinct(raison_sociale),
+    montant_moyen = mean(montant_num, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total))
+
+if(nrow(influenceurs_analysis) > 0) {
+  print("=== INFLUENCEURS LES PLUS RÉMUNÉRÉS ===")
+  influenceurs_analysis %>%
+    head(10) %>%
+    mutate(
+      montant_total = round(montant_total, 0),
+      montant_moyen = round(montant_moyen, 0),
+      nom_complet = paste(identite, prenom)
+    ) %>%
+    select(
+      `Influenceur` = nom_complet,
+      `Montant total (€)` = montant_total,
+      `Montant moyen (€)` = montant_moyen,
+      `Nb déclarations` = nombre_declarations,
+      `Nb entreprises` = entreprises_differentes
+    ) %>%
+    print()
+}
+
+# =============================================================================
+# 7. ANALYSE GÉOGRAPHIQUE
+# =============================================================================
+
+# Répartition par région
+repartition_regionale <- declarations_clean %>%
+  filter(!is.na(reg_name)) %>%
+  group_by(reg_name) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    beneficiaires_uniques = n_distinct(paste(identite, prenom)),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total)) %>%
+  head(10)
+
+# Graphique répartition régionale
+g4 <- ggplot(repartition_regionale, aes(x = reorder(reg_name, montant_total), y = montant_total/1000000)) +
+  geom_col(fill = "#e67e22", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    title = "Top 10 des régions par montant d'avantages reçus",
+    x = "", 
+    y = "Montant total (millions €)"
+  ) +
+  theme_minimal()
+
+# Sauvegarder le graphique
+ggsave("ggplot_analysis/04_repartition_regionale.png", plot = g4, 
+       width = 12, height = 8, dpi = 600, bg = "white")
+print(g4)
+
+# =============================================================================
+# 8. ANALYSE PAR TYPE D'AVANTAGE
+# =============================================================================
+
+# Types d'avantages les plus fréquents
+types_avantages <- declarations_clean %>%
+  filter(!is.na(motif_lien_interet)) %>%
+  group_by(motif_lien_interet) %>%
+  summarise(
+    montant_total = sum(montant_num, na.rm = TRUE),
+    nombre_declarations = n(),
+    montant_moyen = mean(montant_num, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(montant_total))
+
+# Graphique types d'avantages
+g5 <- ggplot(types_avantages, aes(x = reorder(motif_lien_interet, montant_total), y = montant_total/1000000)) +
+  geom_col(fill = "#9b59b6", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    title = "Montants totaux par type d'avantage",
+    x = "", 
+    y = "Montant total (millions €)"
+  ) +
+  theme_minimal()
+
+# Sauvegarder le graphique
+ggsave("ggplot_analysis/05_types_avantages.png", plot = g5, 
+       width = 12, height = 8, dpi = 600, bg = "white")
+print(g5)
+
+# =============================================================================
+# 9. STATISTIQUES RÉSUMÉES IMPORTANTES
+# =============================================================================
+
+print("=== STATISTIQUES GÉNÉRALES ===")
+cat("Période analysée:", min(declarations_clean$annee, na.rm = TRUE), "-", max(declarations_clean$annee, na.rm = TRUE), "\n")
+cat("Nombre total de déclarations:", nrow(declarations_clean), "\n")
+cat("Montant total des avantages:", round(sum(declarations_clean$montant_num, na.rm = TRUE)/1000000, 2), "millions €\n")
+cat("Montant moyen par déclaration:", round(mean(declarations_clean$montant_num, na.rm = TRUE), 0), "€\n")
+cat("Nombre d'entreprises déclarantes:", n_distinct(declarations_clean$raison_sociale), "\n")
+cat("Nombre de bénéficiaires uniques:", n_distinct(paste(declarations_clean$identite, declarations_clean$prenom)), "\n")
+
+# =============================================================================
+# 10. GRAPHIQUE COMBINÉ FINAL
+# =============================================================================
+
+# Créer un dashboard avec plusieurs graphiques
+dashboard <- (g1 + g2) / (g3 + g4)
+
+# Sauvegarder le dashboard
+ggsave("ggplot_analysis/06_dashboard_general.png", plot = dashboard, 
+       width = 16, height = 12, dpi = 600, bg = "white")
+print(dashboard)
+
+# =============================================================================
+# 11. ANALYSES COMPLÉMENTAIRES INTÉRESSANTES
+# =============================================================================
+
+# Evolution des montants moyens par catégorie
+evolution_categories <- declarations_clean %>%
+  group_by(annee, categorie_simple) %>%
+  summarise(
+    montant_moyen = mean(montant_num, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+g6 <- ggplot(evolution_categories, aes(x = annee, y = montant_moyen, color = categorie_simple)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  scale_color_viridis_d() +
+  labs(
+    title = "Évolution du montant moyen par catégorie",
+    x = "Année",
+    y = "Montant moyen (€)",
+    color = "Catégorie"
+  ) +
+  theme_minimal()
+
+# Sauvegarder le graphique
+ggsave("ggplot_analysis/07_evolution_categories.png", plot = g6, 
+       width = 12, height = 8, dpi = 600, bg = "white")
+print(g6)
+
+# Relations entreprises-bénéficiaires (concentration)
+concentration_analysis <- declarations_clean %>%
+  group_by(raison_sociale) %>%
+  summarise(
+    nb_beneficiaires = n_distinct(paste(identite, prenom)),
+    montant_total = sum(montant_num, na.rm = TRUE),
+    montant_par_beneficiaire = montant_total / nb_beneficiaires,
+    .groups = 'drop'
+  ) %>%
+  filter(nb_beneficiaires >= 10) %>%
+  arrange(desc(montant_par_beneficiaire))
+
+print("=== ENTREPRISES AVEC LE PLUS GROS MONTANT MOYEN PAR BÉNÉFICIAIRE ===")
+concentration_analysis %>%
+  head(10) %>%
+  mutate(
+    montant_par_beneficiaire = round(montant_par_beneficiaire, 0)
+  ) %>%
+  select(
+    Entreprise = raison_sociale,
+    `Nb bénéficiaires` = nb_beneficiaires,
+    `Montant moyen/bénéficiaire` = montant_par_beneficiaire
+  ) %>%
+  print()
+
+print("=== ANALYSE TERMINÉE ===")
+print("Tous les graphiques et analyses sont générés !")
+print("Images sauvegardées en 600 DPI dans le dossier 'ggplot_analysis/':")
+print("- 01_evolution_montants_annuels.png")
+print("- 02_top_entreprises.png") 
+print("- 03_repartition_categories.png")
+print("- 04_repartition_regionale.png")
+print("- 05_types_avantages.png")
+print("- 06_dashboard_general.png")
+print("- 07_evolution_categories.png")
+print("Tu peux maintenant utiliser ces images HD pour ton PowerPoint !")
+```
+
