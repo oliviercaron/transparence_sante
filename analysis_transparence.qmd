@@ -399,7 +399,7 @@ concentration_analysis <- declarations_clean %>%
     montant_par_beneficiaire = montant_total / nb_beneficiaires,
     .groups = 'drop'
   ) %>%
-  filter(nb_beneficiaires >= 10) %>%
+  filter(nb_beneficippaires >= 10) %>%
   arrange(desc(montant_par_beneficiaire))
 
 print("=== ENTREPRISES AVEC LE PLUS GROS MONTANT MOYEN PAR BÉNÉFICIAIRE ===")
